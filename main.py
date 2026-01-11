@@ -3,10 +3,10 @@ import json
 import time
 import requests
 import caldav
-from caldav.elements import dav, cdav
-from datetime import datetime, date
+from caldav.elements import dav
+from datetime import datetime, date, timedelta, timezone
 import logging
-from icalendar import Event
+from icalendar import Event, vDate, vDatetime
 import sys
 
 # Configure logging
@@ -27,7 +27,7 @@ def get_backup_json():
     try:
         logger.info(f"Fetching backup.json from {WEBDAV_URL}")
         # WebDAV often requires basic auth.
-        response = requests.get(WEBDAV_URL, auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD))
+        response = requests.get(WEBDAV_URL, auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD), timeout=30)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -84,10 +84,10 @@ def process_tasks(data, calendar):
         is_all_day = False
 
         if due_timestamp:
-            # Timestamp is usually milliseconds in JS/SuperProductivity?
-            # Let's check. Standard JS Date.now() is ms.
+            # Timestamp is usually milliseconds in JS/SuperProductivity
             # Python expects seconds.
-            dt_start = datetime.fromtimestamp(due_timestamp / 1000.0)
+            # Use UTC to ensure consistency
+            dt_start = datetime.fromtimestamp(due_timestamp / 1000.0, tz=timezone.utc)
         elif due_day:
             try:
                 dt_start = datetime.strptime(due_day, '%Y-%m-%d').date()
@@ -100,7 +100,6 @@ def process_tasks(data, calendar):
             continue
 
         title = task.get('title', 'Untitled Task')
-        is_done = task.get('isDone', False)
 
         # Construct a unique ID for the calendar event
         # We prefix to avoid collisions if the user uses the calendar for other things
@@ -108,48 +107,52 @@ def process_tasks(data, calendar):
 
         # Check if event exists
         try:
-            # CalDAV search is expensive, but searching by UID is faster usually.
-            # caldav library supports getting by UID?
-            # calendar.event_by_uid(uid)
             existing_event = None
             try:
                 existing_event = calendar.event_by_uid(uid)
             except caldav.error.NotFoundError:
                 pass
             except Exception as e:
-                # Some servers might throw other errors
+                # Some servers might throw other errors or if event_by_uid is not supported
                 pass
 
             if existing_event:
-                # Optional: Update the event if details changed.
-                # For now, the requirement says "Prevent duplicates (check if event exists before creating)".
-                # I will assume that means "don't create if exists".
-                # However, if the due date changed in SP, we probably want to update it.
-                # Let's inspect the existing event.
+                # Update the event if details changed.
                 # Use icalendar component (best practice for caldav 2.0+)
                 try:
-                    comp = existing_event.icalendar_component
+                    # icalendar_component returns the VCALENDAR object which wraps VEVENT
+                    ical = existing_event.icalendar_component
                 except Exception:
-                    # Fallback or older version logic, but we assume new env
-                    # If failed to parse, maybe recreate?
                     logger.warning(f"Could not parse existing event for {title}, skipping update check.")
                     continue
 
+                # We must find the VEVENT component inside the VCALENDAR
+                vevent = None
+                for component in ical.walk("VEVENT"):
+                    vevent = component
+                    break
+
+                if not vevent:
+                     logger.warning(f"No VEVENT found in existing event for {title}, skipping.")
+                     continue
+
                 # Check if we need to update
-                # Compare start time
                 # comp.get('dtstart').dt returns the native python object (date or datetime)
-                current_start = comp.get('dtstart').dt if comp.get('dtstart') else None
-                current_summary = str(comp.get('summary')) if comp.get('summary') else ""
+                current_start = vevent.get('dtstart').dt if vevent.get('dtstart') else None
+                current_summary = str(vevent.get('summary')) if vevent.get('summary') else ""
 
                 needs_update = False
 
                 # Handling date vs datetime comparison
+                # Ensure safe comparison between potentially naive and aware datetimes
+                val_a = current_start.replace(tzinfo=None) if isinstance(current_start, datetime) else current_start
+                val_b = dt_start.replace(tzinfo=None) if isinstance(dt_start, datetime) else dt_start
+
                 if isinstance(current_start, datetime) and isinstance(dt_start, datetime):
-                     # Remove tzinfo for simple comparison if one is naive
-                     if current_start.replace(tzinfo=None) != dt_start.replace(tzinfo=None):
+                     if val_a != val_b:
                          needs_update = True
                 elif isinstance(current_start, date) and isinstance(dt_start, date):
-                    if current_start != dt_start:
+                    if val_a != val_b:
                         needs_update = True
                 elif type(current_start) != type(dt_start):
                     # Type changed (e.g. all-day to time-based)
@@ -160,34 +163,47 @@ def process_tasks(data, calendar):
 
                 if needs_update:
                     logger.info(f"Updating task: {title}")
-                    # Update properties
-                    # icalendar allows setting values directly
-                    comp['dtstart'] = dt_start
-                    comp['summary'] = title
 
-                    # We must set the data on the event object before saving
-                    # But verify if existing_event.save() automatically uses the modified component?
-                    # The docs say: my_events[0].component['summary'] = "..."; my_events[0].save()
-                    # So we don't need to serialize manually if we modify the component property *in place*?
-                    # Wait, accessing .icalendar_component might return a copy or the object itself.
-                    # In caldav library:
-                    # @property
-                    # def icalendar_component(self):
-                    #     return self.instance
-                    # And .save() uses self._instance if set.
-                    # So modifying it should work.
+                    # Update properties on the VEVENT component
+                    vevent['summary'] = title
 
-                    # However, to be safe/explicit:
+                    if is_all_day:
+                        vevent['dtstart'] = vDate(dt_start)
+                        vevent['dtend'] = vDate(dt_start + timedelta(days=1))
+                        # Clean up duration if it exists
+                        if 'DURATION' in vevent: del vevent['DURATION']
+                    else:
+                        vevent['dtstart'] = vDatetime(dt_start)
+                        # Remove dtend/duration for point-in-time event, or keep if we wanted duration.
+                        # For now, to be safe and avoid conflicts with old all-day data:
+                        if 'DTEND' in vevent: del vevent['DTEND']
+                        if 'DURATION' in vevent: del vevent['DURATION']
+
+                    # Save the changes
+                    # existing_event.icalendar_component is a property that returns the object derived from data
+                    # To save, we usually need to convert back to ical and set data, or let library handle it.
+                    # CalDAV library usually updates .data from .icalendar_component when save is called,
+                    # provided we modified the SAME object instance.
                     existing_event.save()
 
             else:
                 logger.info(f"Creating task: {title}")
                 # Create new event
-                calendar.save_event(
-                    dtstart=dt_start,
-                    summary=title,
-                    uid=uid
-                )
+                # For all-day events, we usually need to specify dtend or duration?
+                # caldav.save_event handles basics.
+                if is_all_day:
+                     calendar.save_event(
+                        dtstart=dt_start,
+                        dtend=dt_start + timedelta(days=1),
+                        summary=title,
+                        uid=uid
+                    )
+                else:
+                    calendar.save_event(
+                        dtstart=dt_start,
+                        summary=title,
+                        uid=uid
+                    )
 
         except Exception as e:
             logger.error(f"Error processing task {task_id}: {e}")
@@ -212,7 +228,11 @@ def main():
 
 if __name__ == "__main__":
     # Check for required env vars
-    required_vars = ['WEBDAV_URL', 'CALDAV_URL', 'CALENDAR_NAME']
+    required_vars = [
+        'WEBDAV_URL', 'WEBDAV_USERNAME', 'WEBDAV_PASSWORD',
+        'CALDAV_URL', 'CALDAV_USERNAME', 'CALDAV_PASSWORD',
+        'CALENDAR_NAME'
+    ]
     missing = [v for v in required_vars if not os.environ.get(v)]
     if missing:
         logger.error(f"Missing environment variables: {', '.join(missing)}")
