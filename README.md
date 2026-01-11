@@ -1,4 +1,4 @@
-# Super Productivity to Nextcloud Calendar Sync
+# Super Productivity to Nextcloud Calendar Sync 
 
 This project is a bridge between [Super Productivity](https://super-productivity.com/) and [Nextcloud Calendar](https://nextcloud.com/).
 
