@@ -22,17 +22,43 @@ CALDAV_USERNAME = os.environ.get('CALDAV_USERNAME')
 CALDAV_PASSWORD = os.environ.get('CALDAV_PASSWORD')
 CALENDAR_NAME = os.environ.get('CALENDAR_NAME')
 
-def get_backup_json():
-    """Fetches the backup.json from WebDAV."""
-    try:
-        logger.info(f"Fetching backup.json from {WEBDAV_URL}")
-        # WebDAV often requires basic auth.
-        response = requests.get(WEBDAV_URL, auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD), timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        logger.error(f"Failed to fetch backup.json: {e}")
-        return None
+def fetch_task_data():
+    """Fetches the task data from WebDAV (supports single file or directory sync)."""
+    urls_to_try = [
+        WEBDAV_URL,
+        f"{WEBDAV_URL.rstrip('/')}/task",
+        f"{WEBDAV_URL.rstrip('/')}/task.json"
+    ]
+
+    for url in urls_to_try:
+        try:
+            logger.info(f"Attempting to fetch data from {url}")
+            response = requests.get(url, auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD), timeout=30)
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+
+                    # Case 1: Full backup.json
+                    if 'task' in data and 'entities' in data['task']:
+                        logger.info("Detected full backup.json format.")
+                        return data
+
+                    # Case 2: Individual task file (sync)
+                    # The file content should match the 'task' key content in backup.json
+                    if 'entities' in data:
+                        logger.info("Detected individual task file format.")
+                        return {'task': data}
+
+                except ValueError:
+                    # Not JSON, likely a directory listing or other response
+                    continue
+        except Exception as e:
+            logger.warning(f"Failed to fetch from {url}: {e}")
+            continue
+
+    logger.error("Could not find valid task data at any attempted URL.")
+    return None
 
 def connect_caldav():
     """Connects to the CalDAV server and returns the calendar object."""
@@ -214,7 +240,7 @@ def main():
     # Run loop
     while True:
         try:
-            json_data = get_backup_json()
+            json_data = fetch_task_data()
             if json_data:
                 calendar = connect_caldav()
                 if calendar:
