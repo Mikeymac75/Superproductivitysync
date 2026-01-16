@@ -76,9 +76,16 @@ def fetch_task_data():
                         logger.info("Detected _meta_ file format.")
                         return {'task': data['mainModelData']['task']}
 
-                except ValueError:
+                    # If we reached here, JSON is valid but keys are missing
+                    logger.warning(f"Valid JSON found at {url} but missing expected keys. Keys found: {list(data.keys())}")
+
+                except ValueError as e:
                     # Not JSON, likely a directory listing or other response
+                    logger.warning(f"Failed to parse JSON from {url}: {e}. Content snippet: {text_content[:100]}")
                     continue
+            else:
+                logger.warning(f"HTTP {response.status_code} returned from {url}")
+
         except Exception as e:
             logger.warning(f"Failed to fetch from {url}: {e}")
             continue
