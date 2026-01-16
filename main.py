@@ -23,11 +23,18 @@ CALDAV_PASSWORD = os.environ.get('CALDAV_PASSWORD')
 CALENDAR_NAME = os.environ.get('CALENDAR_NAME')
 
 def fetch_task_data():
-    """Fetches the task data from WebDAV (supports single file or directory sync)."""
+    """Fetches the task data from WebDAV (supports single file, directory sync, or meta file)."""
+    # Clean up the URL to avoid double slashes if user included trailing slash
+    base_url = WEBDAV_URL.rstrip('/')
+    
+    # List of URLs to try. 
+    # 1. The exact URL provided (e.g. pointing to _meta_ or backup.json)
+    # 2. The URL + /task (for split file structure)
+    # 3. The URL + /task.json
     urls_to_try = [
         WEBDAV_URL,
-        f"{WEBDAV_URL.rstrip('/')}/task",
-        f"{WEBDAV_URL.rstrip('/')}/task.json"
+        f"{base_url}/task",
+        f"{base_url}/task.json"
     ]
 
     for url in urls_to_try:
@@ -36,19 +43,38 @@ def fetch_task_data():
             response = requests.get(url, auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD), timeout=30)
 
             if response.status_code == 200:
+                text_content = response.text
+                
+                # SPECIAL HANDLING: Handle Super Productivity 'pf_' prefix
+                # The _meta_ file often starts with "pf_4.4__{...}" which is not valid JSON.
+                if text_content.startswith('pf_'):
+                    try:
+                        # Split on the first '__' and take the rest
+                        parts = text_content.split('__', 1)
+                        if len(parts) > 1:
+                            text_content = parts[1]
+                            logger.info("Detected 'pf_' prefix. Stripped it for parsing.")
+                    except Exception:
+                        pass # If split fails, try parsing raw
+                
                 try:
-                    data = response.json()
+                    data = json.loads(text_content)
 
-                    # Case 1: Full backup.json
+                    # Case 1: Standard backup.json
                     if 'task' in data and 'entities' in data['task']:
-                        logger.info("Detected full backup.json format.")
+                        logger.info("Detected standard backup.json format.")
                         return data
 
-                    # Case 2: Individual task file (sync)
-                    # The file content should match the 'task' key content in backup.json
+                    # Case 2: Individual task file (sync/task)
                     if 'entities' in data:
                         logger.info("Detected individual task file format.")
                         return {'task': data}
+                        
+                    # Case 3: Meta File (_meta_)
+                    # This file bundles everything under 'mainModelData'
+                    if 'mainModelData' in data and 'task' in data['mainModelData']:
+                        logger.info("Detected _meta_ file format.")
+                        return {'task': data['mainModelData']['task']}
 
                 except ValueError:
                     # Not JSON, likely a directory listing or other response
