@@ -104,8 +104,8 @@ def connect_caldav():
         # Determine the base DAV URL for discovery
         # If URL contains /calendars/, extract base to use for principal discovery
         if '/calendars/' in CALDAV_URL:
-            # Extract base URL: everything before /calendars/
-            base_url = CALDAV_URL.split('/calendars/')[0] + '/remote.php/dav/'
+            # Extract base URL: everything before /calendars/ (which already includes /remote.php/dav)
+            base_url = CALDAV_URL.split('/calendars/')[0] + '/'
             # Also extract the calendar path for matching later
             calendar_path = '/calendars/' + CALDAV_URL.split('/calendars/')[1]
             logger.info(f"Full calendar URL provided. Using base: {base_url}")
