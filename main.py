@@ -13,6 +13,10 @@ import sys
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Suppress verbose caldav library logging (it dumps full HTML pages)
+logging.getLogger('caldav').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 # Environment variables
 WEBDAV_URL = os.environ.get('WEBDAV_URL')
 WEBDAV_USERNAME = os.environ.get('WEBDAV_USERNAME')
