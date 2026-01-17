@@ -189,7 +189,11 @@ def process_tasks(data, calendar):
     logger.info(f"Found {len(tasks)} tasks to check.")
 
     for task_id, task in tasks.items():
-        # Sync ALL tasks - use today for tasks without due dates
+        # Skip subtasks - they have a parentId
+        if task.get('parentId'):
+            continue
+            
+        # Only sync tasks that have a due date
         due_day = task.get('dueDay')
         due_timestamp = task.get('dueWithTime')
 
@@ -208,12 +212,11 @@ def process_tasks(data, calendar):
                 is_all_day = True
             except ValueError:
                 logger.warning(f"Invalid dueDay format for task {task_id}: {due_day}")
-                # Fall through to use today's date
+                continue
         
-        # If no due date, use today
+        # Skip tasks without due dates
         if not dt_start:
-            dt_start = date.today()
-            is_all_day = True
+            continue
 
         title = task.get('title', 'Untitled Task')
 
