@@ -314,6 +314,15 @@ def process_tasks(data, calendar):
                     repeat_cfg = task.get('repeatCfg')
                     rrule_line = ""
                     
+                    # Debug: log the repeatCfg if present
+                    if repeat_cfg:
+                        logger.info(f"  repeatCfg found: {repeat_cfg} (type: {type(repeat_cfg).__name__})")
+                    
+                    # Also check for tagIds or other indicators of scheduled tasks
+                    reminder_id = task.get('reminderId')
+                    if reminder_id:
+                        logger.info(f"  reminderId found: {reminder_id}")
+                    
                     if repeat_cfg:
                         # Super Productivity repeatCfg can be:
                         # - A string like "DAILY", "WEEKLY", "MONTHLY", "YEARLY"
@@ -330,11 +339,12 @@ def process_tasks(data, calendar):
                                 rrule_line = f"\nRRULE:FREQ={freq}"
                                 logger.info(f"  Adding recurrence: {freq}")
                         elif isinstance(repeat_cfg, dict):
-                            # Handle object-based config
-                            freq = repeat_cfg.get('repeatEvery', 'DAILY').upper()
-                            if freq in ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']:
-                                rrule_line = f"\nRRULE:FREQ={freq}"
-                                logger.info(f"  Adding recurrence: {freq}")
+                            # Handle object-based config - log all keys to understand structure
+                            logger.info(f"  repeatCfg keys: {list(repeat_cfg.keys())}")
+                            freq = repeat_cfg.get('repeatEvery', repeat_cfg.get('frequency', 'DAILY'))
+                            if isinstance(freq, str) and freq.upper() in ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']:
+                                rrule_line = f"\nRRULE:FREQ={freq.upper()}"
+                                logger.info(f"  Adding recurrence: {freq.upper()}")
                     
                     # Build the iCal content manually
                     if is_all_day:
