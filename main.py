@@ -96,48 +96,63 @@ def fetch_task_data():
 def connect_caldav():
     """Connects to the CalDAV server and returns the calendar object.
     
-    Uses discovery mode via principal() for maximum Nextcloud compatibility.
-    If CALDAV_URL points to a specific calendar, we extract the base URL
-    and find the calendar by matching URL or display name.
+    Uses DIRECT calendar URL access for better compatibility with TurnKey Nextcloud.
+    Falls back to discovery mode if direct access fails.
     """
     try:
-        # Determine the base DAV URL for discovery
-        # If URL contains /calendars/, extract base to use for principal discovery
+        logger.info(f"Connecting to CalDAV server...")
+        logger.info(f"CALDAV_URL: {CALDAV_URL}")
+        
+        # Create client with the full calendar URL
+        client = caldav.DAVClient(
+            url=CALDAV_URL,
+            username=CALDAV_USERNAME,
+            password=CALDAV_PASSWORD
+        )
+        
+        # Try direct calendar access first (works better with some Nextcloud setups)
+        try:
+            logger.info("Trying direct calendar access...")
+            calendar = caldav.Calendar(client=client, url=CALDAV_URL)
+            
+            # Verify the calendar exists by trying to get its properties
+            props = calendar.get_properties([dav.DisplayName()])
+            display_name = props.get(dav.DisplayName(), 'Unknown')
+            logger.info(f"Direct access successful! Calendar: '{display_name}'")
+            logger.info(f"Calendar URL: {calendar.url}")
+            return calendar
+            
+        except Exception as direct_err:
+            logger.warning(f"Direct access failed: {direct_err}")
+            logger.info("Falling back to discovery mode...")
+        
+        # Fallback: Use principal discovery
         if '/calendars/' in CALDAV_URL:
-            # Extract base URL: everything before /calendars/ (which already includes /remote.php/dav)
             base_url = CALDAV_URL.split('/calendars/')[0] + '/'
-            # Also extract the calendar path for matching later
             calendar_path = '/calendars/' + CALDAV_URL.split('/calendars/')[1]
-            logger.info(f"Full calendar URL provided. Using base: {base_url}")
-            logger.info(f"Will match calendar path: {calendar_path}")
         else:
             base_url = CALDAV_URL
             calendar_path = None
         
-        logger.info(f"Connecting to CalDAV server at {base_url}")
         client = caldav.DAVClient(
             url=base_url,
             username=CALDAV_USERNAME,
             password=CALDAV_PASSWORD
         )
         
-        # Use principal discovery (most reliable for Nextcloud)
-        logger.info("Using discovery mode to find calendars...")
         principal = client.principal()
         calendars = principal.calendars()
 
         target_calendar = None
-        logger.info(f"Found {len(calendars)} calendars.")
+        logger.info(f"Found {len(calendars)} calendars via discovery.")
         
         for calendar in calendars:
-            # Get properties for matching
             properties = calendar.get_properties([dav.DisplayName(), ])
             display_name = properties.get(dav.DisplayName(), '')
             cal_url = str(calendar.url) if calendar.url else ''
             
             logger.info(f"  - Calendar: '{display_name}' at {cal_url}")
             
-            # Match by: URL path, display name, or CALENDAR_NAME env var
             if calendar_path and calendar_path.rstrip('/') in cal_url:
                 target_calendar = calendar
                 logger.info(f"Matched by URL path: {display_name}")
@@ -153,6 +168,7 @@ def connect_caldav():
 
         logger.info(f"Using calendar: {target_calendar.url}")
         return target_calendar
+        
     except Exception as e:
         logger.error(f"Failed to connect to CalDAV: {e}")
         import traceback
