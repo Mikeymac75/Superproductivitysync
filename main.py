@@ -186,6 +186,13 @@ def process_tasks(data, calendar):
         return
 
     tasks = data['task']['entities']
+    
+    # Get repeat configs - Super Productivity stores these separately
+    repeat_configs = {}
+    if 'taskRepeatCfg' in data and 'entities' in data['taskRepeatCfg']:
+        repeat_configs = data['taskRepeatCfg']['entities']
+        logger.info(f"Found {len(repeat_configs)} repeat configurations")
+    
     logger.info(f"Found {len(tasks)} tasks to check.")
 
     for task_id, task in tasks.items():
@@ -310,41 +317,17 @@ def process_tasks(data, calendar):
                 logger.info(f"  Calendar URL: {calendar.url}")
                 # Use raw HTTP PUT instead of caldav library (more reliable for TurnKey Nextcloud)
                 try:
-                    # Check for recurrence configuration
-                    repeat_cfg = task.get('repeatCfg')
+                    # Check for recurrence - Super Productivity uses repeatCfgId to link to config
                     rrule_line = ""
+                    repeat_cfg_id = task.get('repeatCfgId')
                     
-                    # Debug: log the repeatCfg if present
-                    if repeat_cfg:
-                        logger.info(f"  repeatCfg found: {repeat_cfg} (type: {type(repeat_cfg).__name__})")
-                    
-                    # Also check for tagIds or other indicators of scheduled tasks
-                    reminder_id = task.get('reminderId')
-                    if reminder_id:
-                        logger.info(f"  reminderId found: {reminder_id}")
-                    
-                    if repeat_cfg:
-                        # Super Productivity repeatCfg can be:
-                        # - A string like "DAILY", "WEEKLY", "MONTHLY", "YEARLY"
-                        # - An object with more complex configuration
-                        if isinstance(repeat_cfg, str):
-                            freq_map = {
-                                'DAILY': 'DAILY',
-                                'WEEKLY': 'WEEKLY', 
-                                'MONTHLY': 'MONTHLY',
-                                'YEARLY': 'YEARLY'
-                            }
-                            freq = freq_map.get(repeat_cfg.upper())
-                            if freq:
-                                rrule_line = f"\nRRULE:FREQ={freq}"
-                                logger.info(f"  Adding recurrence: {freq}")
-                        elif isinstance(repeat_cfg, dict):
-                            # Handle object-based config - log all keys to understand structure
-                            logger.info(f"  repeatCfg keys: {list(repeat_cfg.keys())}")
-                            freq = repeat_cfg.get('repeatEvery', repeat_cfg.get('frequency', 'DAILY'))
-                            if isinstance(freq, str) and freq.upper() in ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']:
-                                rrule_line = f"\nRRULE:FREQ={freq.upper()}"
-                                logger.info(f"  Adding recurrence: {freq.upper()}")
+                    if repeat_cfg_id and repeat_cfg_id in repeat_configs:
+                        cfg = repeat_configs[repeat_cfg_id]
+                        # SP repeat config has: repeatCycle (DAILY, WEEKLY, MONTHLY, YEARLY)
+                        cycle = cfg.get('repeatCycle', '').upper()
+                        if cycle in ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']:
+                            rrule_line = f"\nRRULE:FREQ={cycle}"
+                            logger.info(f"  Adding recurrence: {cycle} (from repeatCfgId: {repeat_cfg_id})")
                     
                     # Build the iCal content manually
                     if is_all_day:
