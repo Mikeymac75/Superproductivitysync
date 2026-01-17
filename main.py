@@ -283,22 +283,31 @@ def process_tasks(data, calendar):
 
             else:
                 logger.info(f"Creating task: {title}")
+                logger.info(f"  Calendar URL: {calendar.url}")
                 # Create new event
                 # For all-day events, we usually need to specify dtend or duration?
                 # caldav.save_event handles basics.
-                if is_all_day:
-                     calendar.save_event(
-                        dtstart=dt_start,
-                        dtend=dt_start + timedelta(days=1),
-                        summary=title,
-                        uid=uid
-                    )
-                else:
-                    calendar.save_event(
-                        dtstart=dt_start,
-                        summary=title,
-                        uid=uid
-                    )
+                try:
+                    if is_all_day:
+                         calendar.save_event(
+                            dtstart=dt_start,
+                            dtend=dt_start + timedelta(days=1),
+                            summary=title,
+                            uid=uid
+                        )
+                    else:
+                        calendar.save_event(
+                            dtstart=dt_start,
+                            summary=title,
+                            uid=uid
+                        )
+                    logger.info(f"  Successfully created event for: {title}")
+                except Exception as save_error:
+                    logger.error(f"  Failed to save event: {save_error}")
+                    # Log the actual URLs being used
+                    logger.error(f"  Calendar URL was: {calendar.url}")
+                    logger.error(f"  Calendar client URL: {calendar.client.url if calendar.client else 'N/A'}")
+                    raise
 
         except Exception as e:
             logger.error(f"Error processing task {task_id}: {e}")
