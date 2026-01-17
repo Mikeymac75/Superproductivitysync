@@ -300,24 +300,57 @@ def process_tasks(data, calendar):
             else:
                 logger.info(f"Creating task: {title}")
                 logger.info(f"  Calendar URL: {calendar.url}")
-                # Create new event
-                # For all-day events, we usually need to specify dtend or duration?
-                # caldav.save_event handles basics.
+                # Use raw HTTP PUT instead of caldav library (more reliable for TurnKey Nextcloud)
                 try:
+                    # Build the iCal content manually
                     if is_all_day:
-                         calendar.save_event(
-                            dtstart=dt_start,
-                            dtend=dt_start + timedelta(days=1),
-                            summary=title,
-                            uid=uid
-                        )
+                        # Format date as YYYYMMDD for VALUE=DATE
+                        dtstart_str = dt_start.strftime('%Y%m%d')
+                        dtend = dt_start + timedelta(days=1)
+                        dtend_str = dtend.strftime('%Y%m%d')
+                        ical_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Super Productivity Sync//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTART;VALUE=DATE:{dtstart_str}
+DTEND;VALUE=DATE:{dtend_str}
+SUMMARY:{title}
+END:VEVENT
+END:VCALENDAR"""
                     else:
-                        calendar.save_event(
-                            dtstart=dt_start,
-                            summary=title,
-                            uid=uid
-                        )
-                    logger.info(f"  Successfully created event for: {title}")
+                        # Format datetime as YYYYMMDDTHHMMSSZ for UTC
+                        dtstart_str = dt_start.strftime('%Y%m%dT%H%M%SZ')
+                        ical_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Super Productivity Sync//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTART:{dtstart_str}
+SUMMARY:{title}
+END:VEVENT
+END:VCALENDAR"""
+                    
+                    # Build the PUT URL
+                    cal_url = str(calendar.url).rstrip('/')
+                    event_url = f"{cal_url}/{uid}.ics"
+                    
+                    logger.info(f"  PUT URL: {event_url}")
+                    
+                    # Make raw HTTP PUT request
+                    response = requests.put(
+                        event_url,
+                        data=ical_content,
+                        auth=(CALDAV_USERNAME, CALDAV_PASSWORD),
+                        headers={'Content-Type': 'text/calendar; charset=utf-8'},
+                        timeout=30
+                    )
+                    
+                    if response.status_code in [200, 201, 204]:
+                        logger.info(f"  Successfully created event for: {title} (HTTP {response.status_code})")
+                    else:
+                        logger.error(f"  Failed to create event: HTTP {response.status_code}")
+                        logger.error(f"  Response: {response.text[:500]}")
                 except Exception as save_error:
                     logger.error(f"  Failed to save event: {save_error}")
                     # Log the actual URLs being used
