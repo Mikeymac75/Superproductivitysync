@@ -303,6 +303,32 @@ def process_tasks(data, calendar):
                 logger.info(f"  Calendar URL: {calendar.url}")
                 # Use raw HTTP PUT instead of caldav library (more reliable for TurnKey Nextcloud)
                 try:
+                    # Check for recurrence configuration
+                    repeat_cfg = task.get('repeatCfg')
+                    rrule_line = ""
+                    
+                    if repeat_cfg:
+                        # Super Productivity repeatCfg can be:
+                        # - A string like "DAILY", "WEEKLY", "MONTHLY", "YEARLY"
+                        # - An object with more complex configuration
+                        if isinstance(repeat_cfg, str):
+                            freq_map = {
+                                'DAILY': 'DAILY',
+                                'WEEKLY': 'WEEKLY', 
+                                'MONTHLY': 'MONTHLY',
+                                'YEARLY': 'YEARLY'
+                            }
+                            freq = freq_map.get(repeat_cfg.upper())
+                            if freq:
+                                rrule_line = f"\nRRULE:FREQ={freq}"
+                                logger.info(f"  Adding recurrence: {freq}")
+                        elif isinstance(repeat_cfg, dict):
+                            # Handle object-based config
+                            freq = repeat_cfg.get('repeatEvery', 'DAILY').upper()
+                            if freq in ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']:
+                                rrule_line = f"\nRRULE:FREQ={freq}"
+                                logger.info(f"  Adding recurrence: {freq}")
+                    
                     # Build the iCal content manually
                     if is_all_day:
                         # Format date as YYYYMMDD for VALUE=DATE
@@ -316,7 +342,7 @@ BEGIN:VEVENT
 UID:{uid}
 DTSTART;VALUE=DATE:{dtstart_str}
 DTEND;VALUE=DATE:{dtend_str}
-SUMMARY:{title}
+SUMMARY:{title}{rrule_line}
 END:VEVENT
 END:VCALENDAR"""
                     else:
@@ -328,7 +354,7 @@ PRODID:-//Super Productivity Sync//EN
 BEGIN:VEVENT
 UID:{uid}
 DTSTART:{dtstart_str}
-SUMMARY:{title}
+SUMMARY:{title}{rrule_line}
 END:VEVENT
 END:VCALENDAR"""
                     
