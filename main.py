@@ -94,7 +94,14 @@ def fetch_task_data():
     return None
 
 def connect_caldav():
-    """Connects to the CalDAV server and returns the calendar object."""
+    """Connects to the CalDAV server and returns the calendar object.
+    
+    Supports two modes:
+    1. Direct mode: If CALDAV_URL points directly to a calendar (contains '/calendars/'),
+       connect to that calendar URL directly without discovery.
+    2. Discovery mode: If CALDAV_URL is a base DAV URL, use principal().calendars()
+       to discover calendars and find one matching CALENDAR_NAME.
+    """
     try:
         logger.info(f"Connecting to CalDAV server at {CALDAV_URL}")
         client = caldav.DAVClient(
@@ -102,20 +109,46 @@ def connect_caldav():
             username=CALDAV_USERNAME,
             password=CALDAV_PASSWORD
         )
+        
+        # Check if CALDAV_URL points directly to a specific calendar
+        # (e.g., .../calendars/admin/personal/ or .../calendars/user/calendarname/)
+        if '/calendars/' in CALDAV_URL:
+            logger.info("Direct calendar URL detected. Connecting directly without discovery.")
+            try:
+                # Use the URL directly as a calendar
+                calendar = client.calendar(url=CALDAV_URL)
+                # Verify the calendar exists by fetching a property
+                try:
+                    props = calendar.get_properties([dav.DisplayName()])
+                    display_name = props.get(dav.DisplayName(), 'Unknown')
+                    logger.info(f"Connected directly to calendar: {display_name}")
+                except Exception:
+                    logger.info(f"Connected directly to calendar at {CALDAV_URL}")
+                return calendar
+            except Exception as e:
+                logger.warning(f"Direct connection failed: {e}. Trying discovery mode...")
+                # Fall through to discovery mode
+        
+        # Discovery mode: use principal to find calendars
+        logger.info("Using discovery mode to find calendars...")
         principal = client.principal()
         calendars = principal.calendars()
 
         target_calendar = None
+        logger.info(f"Found {len(calendars)} calendars. Looking for '{CALENDAR_NAME}'...")
+        
         for calendar in calendars:
             # We check display name or name
             properties = calendar.get_properties([dav.DisplayName(), ])
             display_name = properties.get(dav.DisplayName(), '')
+            logger.debug(f"  - Found calendar: '{display_name}' (name: {calendar.name})")
             if display_name == CALENDAR_NAME or calendar.name == CALENDAR_NAME:
                 target_calendar = calendar
+                logger.info(f"Found matching calendar: {display_name}")
                 break
 
         if not target_calendar:
-            logger.error(f"Calendar '{CALENDAR_NAME}' not found.")
+            logger.error(f"Calendar '{CALENDAR_NAME}' not found among available calendars.")
             return None
 
         return target_calendar
